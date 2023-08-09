@@ -76,8 +76,8 @@ rule fastp:
         """
 
 rule remove_host:
-# http://seqanswers.com/forums/archive/index.php/t-42552.html
-# https://drive.google.com/file/d/0B3llHR93L14wd0pSSnFULUlhcUk/edit?usp=sharing
+    # http://seqanswers.com/forums/archive/index.php/t-42552.html
+    # https://drive.google.com/file/d/0B3llHR93L14wd0pSSnFULUlhcUk/edit?usp=sharing
     input:
         trim1 = os.path.join(outdir, "fastp", "{sample}_1.trim.fq.gz"),
         trim2 = os.path.join(outdir, "fastp", "{sample}_2.trim.fq.gz"),
@@ -190,9 +190,8 @@ rule anvio_add_path:
         export PATH=\$PATH:$PWD/anvio/bin:$PWD/anvio/sandbox
         echo -e "Updating from anvi'o GitHub (press CTRL+C to cancel) ..."
         cd $PWD/anvio && git pull && cd -
-        EOF
         """
-
+        # EOF
 
 rule mags_anviodb_to_fasta:
     input:
@@ -210,6 +209,7 @@ rule mags_anviodb_to_fasta:
     benchmark: os.path.join(logs_dir, 'anvi-export-contigs', '{mag}.benchmark')
     shell:
         """
+        anvi-migrate -c {input.mag_db} --migrate-safely
         anvi-export-contigs -c {input.mag_db} -o {output.mag_fasta} 2> {log}
         """
 
@@ -221,7 +221,7 @@ rule write_fromfile_csv:
     run:
         with open(output.mag_fromfile, 'w') as f:
             f.write('name,genome_filename,protein_filename\n')
-            for magfile in mag_fastas:
+            for magfile in input.mag_fastas:
                 mag_name = os.path.basename(magfile).split('.')[0]
                 f.write(f'{mag_name},{magfile},\n')
 
