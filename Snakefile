@@ -1,24 +1,26 @@
 import os
 import pandas as pd
 
-outdir = config.get('outdir', 'output')
+outdir = config.get('outdir', 'output.magsmash')
 logs_dir = os.path.join(outdir, 'logs')
 HUMAN = "/group/ctbrowngrp/non-microbial-reference/hg19_main_mask_ribo_animal_allplant_allfungus.fa.gz"
 
 # read in excel sheet to get sample accessions
 xls_file = 'inputs/Table_S01_METADATA_metagenomes.xlsx'
 sample_info = pd.read_excel(xls_file, sheet_name='(a) Metagenomes', index_col=1, header=1, usecols= "B:S")
-SAMPLES = sample_info['NCBI ACCESSION'].dropna().tolist()[:2]
+SAMPLES = sample_info['NCBI ACCESSION'].dropna().tolist()
 # map to internal names, in case we need it
 sample_namemap = sample_info.set_index('NCBI ACCESSION')['Sample Internal ID'].to_dict()
 
 # mag info
 magfile = 'inputs/mags.txt'
 MAGS = [x.strip() for x in open(magfile, 'r')]
+KSIZE = [31] # [21,31,51]
+MAGS_DIR = "mags"
 
 rule all:
     input:
-        expand(os.path.join(outdir, "gather", "{sample}.{type}.gather-k{ksize}.csv"), sample = SAMPLES, type= ['raw', 'nohost'], ksize = [21,31,51]),
+        expand(os.path.join(outdir, "gather", "{sample}.{type}.gather-k{ksize}.csv"), sample = SAMPLES, type= ['raw', 'nohost'], ksize = KSIZE), 
 
 ####################
 # download reads #
@@ -33,7 +35,7 @@ rule kingfisher_download:
     resources:
         mem_mb = 3000,
         time = 100,
-        partition = 'med2',
+        partition = 'high2',
     conda: "conf/env/kingfisher.yml",
     params:
         kf_dir = os.path.join(outdir, 'raw'),
@@ -43,7 +45,7 @@ rule kingfisher_download:
         """
         cd {params.kf_dir}
         kingfisher get --download-threads {threads} -t {threads} \
-                       -r {wildcards.sample} -m ena-ftp aws-http prefetch 2> {log}
+                       -r {wildcards.sample} -m ena-ftp aws-http 2> {log}
         cd -
         """
 
@@ -66,7 +68,7 @@ rule fastp:
     resources:
         mem_mb = lambda wildcards, attempt: attempt * 20000,
         time = 240,
-        partition = 'med2',
+        partition = 'low2',
     conda: "conf/env/fastp.yml"
     shell:
         """
@@ -92,6 +94,8 @@ rule remove_host:
     threads: 4
     resources:
         mem_mb = 68000,
+        time= 240,
+        partition= 'low2',
     conda: "conf/env/bbmap.yml"
     log: os.path.join(logs_dir, 'remove_host', '{sample}.log')
     benchmark: os.path.join(logs_dir, 'remove_host', '{sample}.benchmark')
@@ -120,7 +124,7 @@ rule sketch_raw:
     benchmark: os.path.join(logs_dir, 'sourmash', '{sample}.raw.benchmark')
     shell:
         """
-        sourmash sketch dna -p dna,k=21,k=31,k=51,abund \
+        sourmash sketch dna -p dna,k=21,k=31,k=51,abund --name {wildcards.sample} \
                             -o {output.sketch} {input.r1} {input.r2} 2> {log}
         """
 
@@ -141,8 +145,8 @@ rule sketch_nohost:
     benchmark: os.path.join(logs_dir, 'sourmash', '{sample}.benchmark')
     shell:
         """
-        sourmash sketch -p dna,k=21,k=31,k=51,abund \
-                        -o {output.sketch} \
+        sourmash sketch dna -p dna,k=21,k=31,k=51,abund \
+                        -o {output.sketch} --name {wildcards.sample} \
                         {input.nohost_r1} {input.nohost_r2} 2> {log}
         """
 
@@ -198,10 +202,10 @@ rule anvio_add_path:
 
 rule mags_anviodb_to_fasta:
     input:
-        mag_db= 'mags/{mag}/CONTIGS.db',
+        mag_db= os.path.join(MAGS_DIR, '{mag}/CONTIGS.db'),
         addpath=".anvio_addpath",
     output:
-        mag_fasta = os.path.join(outdir, "mags", "{mag}.fa")
+        mag_fasta = os.path.join(MAGS_DIR, "{mag}.fa")
     threads: 1
     resources:
         mem_mb = 1000,
@@ -231,10 +235,10 @@ rule write_fromfile_csv:
 
 rule sketch_mags:
     input:
-        mag_fastas = expand(os.path.join(outdir, "mags", "{mag}.fa"), mag = MAGS),
-        mag_fromfile = os.path.join(outdir, "mags", "mags.fromfile.csv")
+        mag_fastas = expand(os.path.join(MAGS_DIR, "{mag}.fa"), mag = MAGS),
+        mag_fromfile = os.path.join(MAGS_DIR, "mags.fromfile.csv")
     output:
-        mag_zip = os.path.join(outdir, "mags", "mags.zip")
+        mag_zip = os.path.join(MAGS_DIR, "mags.zip")
     threads: 1
     resources:
         mem_mb = 1000,
@@ -254,7 +258,7 @@ rule sketch_mags:
 rule gather:
     input:
         sample=os.path.join(outdir, "sketch", "{sample}.{type}.zip"),
-        magdb = os.path.join(outdir, "mags", "mags.zip"),
+        magdb = os.path.join(MAGS_DIR, "mags.zip"),
     output:
         gather_csv = os.path.join(outdir, "gather", "{sample}.{type}.gather-k{ksize}.csv"),
         gather_txt = os.path.join(outdir, "gather", "{sample}.{type}.gather-k{ksize}.txt"),
@@ -263,6 +267,8 @@ rule gather:
         mem_mb = lambda wildcards, attempt: attempt * 10000,
         time = 240,
         partition = 'bmm',
+    log: os.path.join(logs_dir, 'gather', '{sample}.{type}.gather-k{ksize}.log')
+    benchmark: os.path.join(logs_dir, 'gather', '{sample}.{type}.gather-k{ksize}benchmark')
     conda:
         "conf/env/sourmash.yml"
     shell:
